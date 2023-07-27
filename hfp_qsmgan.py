@@ -42,6 +42,8 @@ if __name__ == '__main__':
                         help='Isotropic resolution for preprocessing.')
     parser.add_argument("-po", "--preproc_output", action="store_true",
                         help='Preprocess outputs images (align and normalize).')
+    parser.add_argument("-qet", "--qsm_echo_times", type=str, default='3,4,5',
+                        help='QSM echoes to be processed (numbers separated by commas). Default: 3,4,5')
     parser.add_argument("-md", "--mask_data", action="store_true",
                         help='Mask images aligned to SWI magnitude.')
     parser.add_argument("-aug", "--augment", action="store_true",
@@ -66,8 +68,6 @@ if __name__ == '__main__':
                         help="Number of parallel jobs. Default 1.")
     parser.add_argument("-n_epochs", "--n_epochs", type=int, default=50,
                         help="Number of epochs. Default 50.")
-    parser.add_argument("-v", "--verbose", type=int, default=1,
-                        help="Level of verbosity. 0: silent, 1: minimal (default), 2: detailed.")
     args = parser.parse_args()
 
 
@@ -84,6 +84,9 @@ if args.resume is None or args.resume == 'latest':
     resume = args.resume
 else:
     resume = int(args.resume)
+
+# Create a list of QSM echo times to be processed
+TE_list = args.qsm_echo_times.split(',')
 
 
 if args.preproc_inputs:
@@ -149,9 +152,9 @@ if args.preproc_inputs:
 
 if args.preproc_output:
 
-    for TE in [3, 4, 5]:
+    for TE in TE_list:
 
-        qsm_aligned_dir = join(args.qsm_dir, 'TE%i' % TE, 'aligned')
+        qsm_aligned_dir = join(args.qsm_dir, f'TE{TE}', 'aligned')
         qsm_scaled_dir = join(qsm_aligned_dir, 'scaled')
         ut.assert_dir(qsm_aligned_dir)
         ut.assert_dir(qsm_scaled_dir)
@@ -163,7 +166,7 @@ if args.preproc_output:
 
                 # Align data to GRE magnitude image
                 swi_mag = ants.image_read(join(args.swi_mag_dir, 'preproc', subject + '.nii.gz'))
-                gre_mag = ants.image_read(join(args.gre_mag_dir, subject, '%i.nii.gz' % TE))
+                gre_mag = ants.image_read(join(args.gre_mag_dir, subject, f'{TE}.nii.gz'))
 
                 dct = ants.registration(
                         swi_mag,
@@ -213,13 +216,10 @@ if args.mask_data:
                     mask, 'erode', radius=5, mtype='binary'
                ).numpy()
 
-        in_dirs = [
-                join(args.swi_phase_dir, 'preproc'),
-                join(args.swi_mag_dir, 'preproc'),
-                join('tgv_qsm', 'TE3', 'aligned', 'scaled'),
-                join('tgv_qsm', 'TE4', 'aligned', 'scaled'),
-                join('tgv_qsm', 'TE5', 'aligned', 'scaled')
-            ]
+        in_dirs = 
+            [join(args.swi_phase_dir, 'preproc'),
+            join(args.swi_mag_dir, 'preproc')] + 
+            [join('tgv_qsm', f'TE{TE}', 'aligned', 'scaled') for TE in TE_list]
 
         for in_dir in in_dirs:
 
@@ -238,10 +238,8 @@ if args.mask_data:
 
 if args.augment:
 
-    data_dirs = [join(args.swi_phase_dir, 'preproc', 'masked'),
-                 join('tgv_qsm', 'TE3', 'aligned', 'scaled', 'masked'),
-                 join('tgv_qsm', 'TE4', 'aligned', 'scaled', 'masked'),
-                 join('tgv_qsm', 'TE5', 'aligned', 'scaled', 'masked')]
+    data_dirs = [join(args.swi_phase_dir, 'preproc', 'masked')] +
+                [join('tgv_qsm', f'TE{TE}', 'aligned', 'scaled', 'masked') for TE in TE_list]
 
     aug.augment_dataset(
         subjects,
@@ -271,13 +269,11 @@ if args.train_unet:
     skf = KFold(n_splits=n_folds, shuffle=False)
     folds = [folds for folds in skf.split(subjects)]
 
-    TEs = [3, 4, 5]
+    for TE in TE_list:
 
-    for TE in TEs:
-
-        model = 'unet_TE%i_96_32_1e-5' % TE
+        model = f'unet_TE{TE}_96_32_1e-5'
         batches_x_dir = [join(args.swi_phase_dir, 'preproc', 'masked')]
-        batches_y_dir = join('tgv_qsm', 'TE%i' % TE, 'aligned', 'scaled', 'masked')
+        batches_y_dir = join('tgv_qsm', f'TE{TE}', 'aligned', 'scaled', 'masked')
 
         for n_fold, (training, test) in enumerate(folds):
 
@@ -367,13 +363,11 @@ if args.train_unet_gan:
     skf = KFold(n_splits=n_folds, shuffle=False)
     folds = [folds for folds in skf.split(subjects)]
 
-    TEs = [3, 4, 5]
+    for TE in TE_list:
 
-    for TE in TEs:
-
-        model = 'unet_gan_TE%i_96_32_1e-5_rsgan_trilinear' % TE
+        model = f'unet_gan_TE{TE}_96_32_1e-5_rsgan_trilinear'
         batches_x_dir = [join(args.swi_phase_dir, 'preproc', 'masked')]
-        batches_y_dir = join('tgv_qsm', 'TE%i' % TE, 'aligned', 'scaled', 'masked')
+        batches_y_dir = join('tgv_qsm', f'TE{TE}, 'aligned', 'scaled', 'masked')
 
         for n_fold, (training, test) in enumerate(folds):
 
@@ -450,7 +444,7 @@ if args.train_unet_gan:
 if args.predict:
 
     # Model
-    for TE in [3, 4, 5]:
+    for TE in TE_list:
         for model in ['unet', 'unet_gan']:
 
             # Patch parameters
